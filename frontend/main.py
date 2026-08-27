@@ -10,6 +10,7 @@ structured parts the chat UI knows how to show:
     surfaceUpdate); static/index.html renders these as a card.
 """
 
+import asyncio
 import os
 import uuid
 
@@ -20,6 +21,7 @@ from a2a.client import ClientConfig, ClientFactory
 from a2a.types import (
     AgentCard,
     AgentInterface,
+    GetTaskRequest,
     Message,
     Part,
     Role,
@@ -170,10 +172,31 @@ async def chat(req: Request):
             elif hasattr(event, "parts"):
                 parts.extend(_extract_parts(getattr(event, "parts")))
 
-        # Non-streaming fallback: pull parts from the final task's artifacts.
-        if not got_artifact_update and last_task is not None:
+        # If task was submitted/running, poll via get_task until finished
+        if last_task is not None and getattr(last_task, "id", None):
+            task_id = last_task.id
+            for _ in range(60):
+                try:
+                    task_resp = await a2a_client.get_task(GetTaskRequest(id=task_id))
+                    state = getattr(task_resp.status, "state", None)
+                    if state not in (1, 2):  # Not SUBMITTED or RUNNING
+                        last_task = task_resp
+                        break
+                except Exception:
+                    pass
+                await asyncio.sleep(1.5)
+
+        # Extract parts from final task status message / history / artifacts
+        if not parts and last_task is not None:
+            if getattr(last_task.status, "message", None) and last_task.status.message.parts:
+                parts.extend(_extract_parts(last_task.status.message.parts))
             for artifact in getattr(last_task, "artifacts", None) or []:
                 parts.extend(_extract_parts(artifact.parts))
+            if not parts and getattr(last_task, "history", None):
+                for hist_msg in reversed(last_task.history):
+                    if getattr(hist_msg, "role", None) == Role.ROLE_AGENT and hist_msg.parts:
+                        parts.extend(_extract_parts(hist_msg.parts))
+                        break
 
     if not parts:
         parts = [{"kind": "text", "text": "(The agent didn't return a reply.)"}]

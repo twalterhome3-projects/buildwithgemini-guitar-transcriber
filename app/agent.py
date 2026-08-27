@@ -163,7 +163,7 @@ def transcribe_audio_file(audio_path: str) -> str:
     """Decodes an MP3 audio file to transcribe song details, lyrics, key, and guitar chords using Gemini.
 
     Args:
-        audio_path: Path to the MP3 audio file on disk (e.g. '/config/Downloads/recordings/04_I_love_rock_and_roll.mp3').
+        audio_path: Path to the MP3 audio file or GCS URI (e.g. '/config/Downloads/recordings/04_I_love_rock_and_roll.mp3' or 'gs://guitar-transcriber-assets-qwiklabs-gcp-03-4e4c0736bba1/recordings/04_I_love_rock_and_roll.mp3').
 
     Returns:
         String containing transcribed lyrics, guitar chords, key, tempo, and song title.
@@ -172,12 +172,19 @@ def transcribe_audio_file(audio_path: str) -> str:
     from google import genai
     from google.genai import types
 
-    if not os.path.exists(audio_path):
-        return f"Error: Audio file not found at path '{audio_path}'."
-
     client = genai.Client(vertexai=True, project=FIRESTORE_PROJECT_ID, location="us-east1")
-    with open(audio_path, "rb") as f:
-        audio_bytes = f.read()
+
+    contents = []
+    if audio_path.startswith("gs://"):
+        contents.append(types.Part.from_uri(file_uri=audio_path, mime_type="audio/mp3"))
+    elif os.path.exists(audio_path):
+        with open(audio_path, "rb") as f:
+            audio_bytes = f.read()
+        contents.append(types.Part.from_bytes(data=audio_bytes, mime_type="audio/mp3"))
+    else:
+        filename = os.path.basename(audio_path)
+        gcs_uri = f"gs://guitar-transcriber-assets-{FIRESTORE_PROJECT_ID}/recordings/{filename}"
+        contents.append(types.Part.from_uri(file_uri=gcs_uri, mime_type="audio/mp3"))
 
     prompt = (
         "Listen to this audio recording carefully and transcribe it for a guitarist:\n"
@@ -187,18 +194,16 @@ def transcribe_audio_file(audio_path: str) -> str:
         "4. Guitar Chord Progression (list of chord names)\n"
         "5. Transcribed Lyrics with chord markers placed above lines where chords change."
     )
+    contents.append(prompt)
 
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=[
-            types.Part.from_bytes(
-                data=audio_bytes,
-                mime_type="audio/mp3",
-            ),
-            prompt,
-        ],
-    )
-    return response.text
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=contents,
+        )
+        return response.text
+    except Exception as e:
+        return f"Error transcribing audio file: {e}"
 
 
 def generate_html_leadsheet(
