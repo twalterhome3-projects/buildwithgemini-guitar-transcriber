@@ -377,14 +377,13 @@ function createProgressWidget(b) {
       <div id="pFill" class="progress-fill" style="width: 15%;"></div>
     </div>
   `;
-  b.textContent = "";
   b.appendChild(widget);
 
   const stages = [
     { p: 15, text: "🎵 Loading audio file & analyzing waveform..." },
-    { p: 40, text: "🎧 Extracting guitar chords & key signature..." },
-    { p: 65, text: "📝 Aligning lyrics with chord progression..." },
-    { p: 85, text: "📄 Generating HTML lead sheet & updating songbook..." },
+    { p: 35, text: "🎧 Extracting guitar chords & key signature..." },
+    { p: 60, text: "📝 Aligning lyrics with chord progression..." },
+    { p: 80, text: "📄 Generating HTML lead sheet & updating songbook..." },
     { p: 95, text: "⚡ Finalizing response..." }
   ];
 
@@ -400,7 +399,7 @@ function createProgressWidget(b) {
       if (pPercent) pPercent.textContent = s.p + "%";
       if (pFill) pFill.style.width = s.p + "%";
     }
-  }, 1600);
+  }, 3500);
 
   return {
     finish: () => {
@@ -567,13 +566,13 @@ function flattenText(messages) {
 }
 
 function renderReply(b, parts) {
-  b.textContent = "";
   const texts = parts.filter(p => p && (p.kind === "text" || (!p.kind && p.text))).map(p => p.text || "");
   const a2ui = parts.filter(p => p && p.kind === "a2ui" && p.data).map(p => p.data);
 
   const textStr = texts.join("\n\n").trim();
   if (textStr) {
     const mdDiv = el("div", "markdown-body");
+    mdDiv.style.marginTop = "0.75rem";
     mdDiv.innerHTML = renderMarkdown(textStr);
     b.appendChild(mdDiv);
   }
@@ -582,7 +581,10 @@ function renderReply(b, parts) {
     b.classList.add("rich");
     if (!renderSurface(a2ui, b)) b.appendChild(el("div", null, flattenText(a2ui) || "(no card content)"));
   }
-  if (!b.childNodes.length) b.textContent = "(no response)";
+  if (!textStr && !a2ui.length) {
+    const errDiv = el("div", "markdown-body", "(The agent returned an empty response.)");
+    b.appendChild(errDiv);
+  }
   log.scrollTop = log.scrollHeight;
 }
 

@@ -234,19 +234,33 @@ def generate_html_leadsheet(
     chords_str = ", ".join(chords) if isinstance(chords, list) else str(chords)
 
     sections_html = ""
-    for sec in sections:
-        sec_type = sec.get("type", "verse").lower()
-        sec_name = sec.get("name", sec_type.capitalize())
+    for sec in (sections if isinstance(sections, list) else []):
+        if not isinstance(sec, dict):
+            continue
+        sec_type = str(sec.get("type", "verse")).lower()
+        sec_name = str(sec.get("name", sec_type.capitalize()))
         badge_class = f"badge-{sec_type}" if sec_type in ("intro", "verse", "chorus", "bridge", "outro") else "badge-verse"
 
         lines_html = ""
-        for line in sec.get("lines", []):
-            pairs_html = ""
-            for pair in line:
-                chord = pair.get("chord", "")
-                word = pair.get("word", "")
-                pairs_html += f'<div class="chord-word-pair"><span class="chord">{chord}</span><span class="word">{word}</span></div>'
-            lines_html += f'<div class="lyric-line">{pairs_html}</div>\n'
+        lines_list = sec.get("lines", [])
+        if isinstance(lines_list, list):
+            for line in lines_list:
+                pairs_html = ""
+                if isinstance(line, str):
+                    pairs_html += f'<div class="chord-word-pair"><span class="chord"></span><span class="word">{line}</span></div>'
+                elif isinstance(line, list):
+                    for pair in line:
+                        if isinstance(pair, dict):
+                            chord = pair.get("chord", "")
+                            word = pair.get("word", "")
+                        elif isinstance(pair, str):
+                            chord = ""
+                            word = pair
+                        else:
+                            chord = ""
+                            word = str(pair)
+                        pairs_html += f'<div class="chord-word-pair"><span class="chord">{chord}</span><span class="word">{word}</span></div>'
+                lines_html += f'<div class="lyric-line">{pairs_html}</div>\n'
 
         sections_html += f'''
     <div class="section">
