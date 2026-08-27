@@ -8,20 +8,6 @@ structured parts the chat UI knows how to show:
   * {"kind": "text", "text": ...}  -> a normal chat bubble
   * {"kind": "a2ui", "data": ...}  -> one A2UI message (beginRendering /
     surfaceUpdate); static/index.html renders these as a card.
-
-Why A2A: agents-cli 1.1.0 (GA) deploys ADK agents to Agent Runtime as A2A agents
-and no longer registers the reasoning-engine operation schema the old
-`agent_engines.get(...).stream_query()` path relied on (operation_schemas() comes
-back empty). The container serves the A2A protocol over the Agent Engine HTTP
-passthrough, so this proxy fetches the agent's card and sends messages with the
-a2a-sdk client (the same path `agents-cli run --mode a2a` uses). This works for
-both A2A and plain ADK 1.1.0 deployments (the container serves A2A either way).
-
-Run:
-  pip install -r requirements.txt
-  export AGENT_ENGINE_RESOURCE_NAME="projects/.../locations/.../reasoningEngines/..."
-  export AGENT_DIRECTORY="app"   # your agent's app directory (agents-cli-manifest.yaml)
-  python main.py                 # -> http://localhost:8080
 """
 
 import os
@@ -33,17 +19,17 @@ import httpx
 from a2a.client import ClientConfig, ClientFactory
 from a2a.types import (
     AgentCard,
-    FilePart,
+    AgentInterface,
     Message,
     Part,
     Role,
+    SendMessageRequest,
     TaskArtifactUpdateEvent,
-    TextPart,
-    TransportProtocol,
 )
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from google.protobuf.json_format import ParseDict
 
 RESOURCE = os.environ["AGENT_ENGINE_RESOURCE_NAME"]
 # The agent's app directory (matches agent_directory in agents-cli-manifest.yaml).
@@ -81,10 +67,6 @@ app = FastAPI()
 
 @app.exception_handler(Exception)
 async def _json_errors(request: Request, exc: Exception):
-    # Always return JSON so the browser never receives a plain-text 500 page
-    # (which shows up in the chat as "Unexpected token 'I', "Internal S"... is
-    # not valid JSON"). Any server-side failure now surfaces as a readable
-    # message in the chat bubble instead.
     return JSONResponse(
         status_code=200,
         content={
@@ -104,34 +86,30 @@ async def _get_card(client: httpx.AsyncClient) -> AgentCard:
     if _card is None:
         resp = await client.get(A2A_CARD_URL)
         resp.raise_for_status()
-        card = AgentCard(**resp.json())
-        # Agent Runtime does not serve a public card URL, so point the client at
-        # the passthrough base for message sends.
-        card.url = A2A_BASE
+        card = ParseDict(resp.json(), AgentCard(), ignore_unknown_fields=True)
+        del card.supported_interfaces[:]
+        card.supported_interfaces.append(AgentInterface(url=A2A_BASE, protocol_binding="JSONRPC"))
+        card.supported_interfaces.append(AgentInterface(url=A2A_BASE, protocol_binding="HTTP_JSON"))
         _card = card
     return _card
 
 
 def _extract_parts(parts: list) -> list[dict]:
-    """Turn A2A response parts into structured parts for the chat UI.
-
-    Text parts pass through as {"kind": "text"}. A2UI data parts (tagged
-    application/json+a2ui) become {"kind": "a2ui", "data": <message>} so the UI
-    renders the card; each data part is one A2UI message (beginRendering or
-    surfaceUpdate).
-    """
     out: list[dict] = []
     for p in parts:
         root = getattr(p, "root", p)
-        if isinstance(root, TextPart) and getattr(root, "text", None):
-            out.append({"kind": "text", "text": root.text})
-        elif getattr(root, "data", None) is not None:
-            meta = getattr(root, "metadata", None) or {}
+        text = getattr(root, "text", None) or getattr(p, "text", None)
+        if text:
+            out.append({"kind": "text", "text": text})
+        data = getattr(root, "data", None) or getattr(p, "data", None)
+        if data is not None:
+            meta = getattr(root, "metadata", None) or getattr(p, "metadata", None) or {}
             mime = meta.get("mimeType") if isinstance(meta, dict) else None
             if mime == _A2UI_MIME:
-                out.append({"kind": "a2ui", "data": root.data})
-        elif isinstance(root, FilePart):
-            uri = getattr(getattr(root, "file", None), "uri", None)
+                out.append({"kind": "a2ui", "data": data})
+        file_obj = getattr(root, "file", None) or getattr(p, "file", None)
+        if file_obj is not None:
+            uri = getattr(file_obj, "uri", None)
             if uri:
                 out.append({"kind": "text", "text": uri})
     return out
@@ -146,37 +124,48 @@ async def chat(req: Request):
 
     async with httpx.AsyncClient(headers=_auth_headers(), timeout=120) as client:
         card = await _get_card(client)
-        factory = ClientFactory(
-            ClientConfig(
-                supported_transports=[
-                    TransportProtocol.jsonrpc,
-                    TransportProtocol.http_json,
-                ],
-                httpx_client=client,
-            )
-        )
+        factory = ClientFactory(ClientConfig(httpx_client=client))
         a2a_client = factory.create(card)
 
-        msg = Message(
-            message_id=str(uuid.uuid4()),
-            role=Role.user,
-            parts=[Part(root=TextPart(text=message))],
-            context_id=_contexts.get(user_id),
+        msg = SendMessageRequest(
+            message=Message(
+                message_id=str(uuid.uuid4()),
+                role=Role.ROLE_USER,
+                parts=[Part(text=message)],
+                context_id=_contexts.get(user_id),
+            )
         )
 
         last_task = None
         got_artifact_update = False
         async for event in a2a_client.send_message(msg):
-            if not isinstance(event, tuple):
-                continue
-            task, update = event
-            if task is not None:
-                last_task = task
-                if getattr(task, "context_id", None):
-                    _contexts[user_id] = task.context_id
-            if isinstance(update, TaskArtifactUpdateEvent):
-                got_artifact_update = True
-                parts.extend(_extract_parts(update.artifact.parts))
+            if hasattr(event, "HasField"):
+                if event.HasField("task"):
+                    last_task = event.task
+                    if event.task.context_id:
+                        _contexts[user_id] = event.task.context_id
+                if event.HasField("artifact_update"):
+                    got_artifact_update = True
+                    parts.extend(_extract_parts(event.artifact_update.artifact.parts))
+                if event.HasField("message"):
+                    parts.extend(_extract_parts(event.message.parts))
+            elif isinstance(event, Message):
+                parts.extend(_extract_parts(event.parts))
+            elif isinstance(event, tuple):
+                task, update = event
+                if task is not None:
+                    last_task = task
+                    if getattr(task, "context_id", None):
+                        _contexts[user_id] = task.context_id
+                if isinstance(update, TaskArtifactUpdateEvent):
+                    got_artifact_update = True
+                    parts.extend(_extract_parts(update.artifact.parts))
+                elif isinstance(update, Message):
+                    parts.extend(_extract_parts(update.parts))
+                elif hasattr(update, "parts"):
+                    parts.extend(_extract_parts(getattr(update, "parts")))
+            elif hasattr(event, "parts"):
+                parts.extend(_extract_parts(getattr(event, "parts")))
 
         # Non-streaming fallback: pull parts from the final task's artifacts.
         if not got_artifact_update and last_task is not None:
@@ -184,8 +173,6 @@ async def chat(req: Request):
                 parts.extend(_extract_parts(artifact.parts))
 
     if not parts:
-        # The turn produced no text or UI (e.g. the agent only ran tools, or a
-        # tool stalled). Be honest rather than silent.
         parts = [{"kind": "text", "text": "(The agent didn't return a reply.)"}]
     return JSONResponse({"parts": parts})
 
@@ -209,5 +196,5 @@ app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 
 if __name__ == "__main__":
     import uvicorn
-
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+    port = int(os.environ.get("PORT", "8080"))
+    uvicorn.run(app, host="0.0.0.0", port=port)
