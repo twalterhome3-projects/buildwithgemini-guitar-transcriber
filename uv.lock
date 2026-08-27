@@ -1424,6 +1424,8 @@ dependencies = [
     { name = "google-cloud-aiplatform", extra = ["agent-engines", "evaluation"] },
     { name = "google-cloud-firestore" },
     { name = "google-cloud-logging" },
+    { name = "google-cloud-storage" },
+    { name = "google-genai" },
     { name = "opentelemetry-resourcedetector-gcp" },
     { name = "protobuf" },
 ]
@@ -1458,6 +1460,8 @@ requires-dist = [
     { name = "google-cloud-aiplatform", extras = ["evaluation"], marker = "extra == 'eval'", specifier = ">=1.156.0" },
     { name = "google-cloud-firestore", specifier = ">=2.19.0" },
     { name = "google-cloud-logging", specifier = ">=3.12.0,<4.0.0" },
+    { name = "google-cloud-storage", specifier = ">=2.14.0" },
+    { name = "google-genai", specifier = ">=2.0.0" },
     { name = "opentelemetry-resourcedetector-gcp", specifier = "<=1.12.0a0" },
     { name = "protobuf", specifier = ">=6.31.1,<7.0.0" },
     { name = "ruff", marker = "extra == 'lint'", specifier = ">=0.4.6,<1.0.0" },
