@@ -149,6 +149,9 @@ async def chat(req: Request):
                     parts.extend(_extract_parts(event.artifact_update.artifact.parts))
                 if event.HasField("message"):
                     parts.extend(_extract_parts(event.message.parts))
+                if event.HasField("status_update"):
+                    if event.status_update.status.HasField("message"):
+                        parts.extend(_extract_parts(event.status_update.status.message.parts))
             elif isinstance(event, Message):
                 parts.extend(_extract_parts(event.parts))
             elif isinstance(event, tuple):
