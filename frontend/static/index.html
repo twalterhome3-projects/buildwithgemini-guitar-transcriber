@@ -83,42 +83,6 @@
   /* When the reply is an A2UI card, drop the bubble chrome so the card stands alone. */
   .bubble.rich { background: transparent; border: none; padding: 0; max-width: 100%; white-space: normal; }
 
-  /* --- Progress Bar Styles --- */
-  .progress-widget {
-    min-width: 320px;
-    max-width: 100%;
-    background: #0f172a;
-    border: 1px solid #334155;
-    border-radius: 10px;
-    padding: 0.85rem 1rem;
-    margin: 0.25rem 0;
-  }
-  .progress-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: #38bdf8;
-    margin-bottom: 0.5rem;
-  }
-  .progress-track {
-    height: 8px;
-    background: #1e293b;
-    border-radius: 9999px;
-    overflow: hidden;
-    position: relative;
-    border: 1px solid #334155;
-  }
-  .progress-fill {
-    height: 100%;
-    width: 0%;
-    background: linear-gradient(90deg, #6366f1, #38bdf8, #818cf8);
-    border-radius: 9999px;
-    transition: width 0.4s ease-in-out;
-    box-shadow: 0 0 12px rgba(56, 189, 248, 0.6);
-  }
-
   /* --- Markdown Body Styling --- */
   .markdown-body {
     line-height: 1.6;
@@ -364,57 +328,6 @@ function renderMarkdown(str) {
   return html.split('\n\n').map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
 }
 
-// Progress Bar Controller
-function createProgressWidget(b) {
-  const widget = document.createElement("div");
-  widget.className = "progress-widget";
-  widget.innerHTML = `
-    <div class="progress-header">
-      <span id="pStage">🎵 Loading audio file & analyzing waveform...</span>
-      <span id="pPercent">15%</span>
-    </div>
-    <div class="progress-track">
-      <div id="pFill" class="progress-fill" style="width: 15%;"></div>
-    </div>
-  `;
-  b.appendChild(widget);
-
-  const stages = [
-    { p: 15, text: "🎵 Loading audio file & analyzing waveform..." },
-    { p: 35, text: "🎧 Extracting guitar chords & key signature..." },
-    { p: 60, text: "📝 Aligning lyrics with chord progression..." },
-    { p: 80, text: "📄 Generating HTML lead sheet & updating songbook..." },
-    { p: 95, text: "⚡ Finalizing response..." }
-  ];
-
-  let step = 0;
-  const timer = setInterval(() => {
-    if (step < stages.length - 1) {
-      step++;
-      const s = stages[step];
-      const pStage = widget.querySelector("#pStage");
-      const pPercent = widget.querySelector("#pPercent");
-      const pFill = widget.querySelector("#pFill");
-      if (pStage) pStage.textContent = s.text;
-      if (pPercent) pPercent.textContent = s.p + "%";
-      if (pFill) pFill.style.width = s.p + "%";
-    }
-  }, 3500);
-
-  return {
-    finish: () => {
-      clearInterval(timer);
-      const pFill = widget.querySelector("#pFill");
-      const pPercent = widget.querySelector("#pPercent");
-      const pStage = widget.querySelector("#pStage");
-      if (pFill) pFill.style.width = "100%";
-      if (pPercent) pPercent.textContent = "100%";
-      if (pStage) pStage.textContent = "✅ Transcription complete!";
-    },
-    stop: () => clearInterval(timer)
-  };
-}
-
 // Fetch available MP3 recordings from /config/Downloads/recordings
 async function loadRecordings() {
   try {
@@ -566,13 +479,13 @@ function flattenText(messages) {
 }
 
 function renderReply(b, parts) {
+  b.textContent = "";
   const texts = parts.filter(p => p && (p.kind === "text" || (!p.kind && p.text))).map(p => p.text || "");
   const a2ui = parts.filter(p => p && p.kind === "a2ui" && p.data).map(p => p.data);
 
   const textStr = texts.join("\n\n").trim();
   if (textStr) {
     const mdDiv = el("div", "markdown-body");
-    mdDiv.style.marginTop = "0.75rem";
     mdDiv.innerHTML = renderMarkdown(textStr);
     b.appendChild(mdDiv);
   }
@@ -581,10 +494,7 @@ function renderReply(b, parts) {
     b.classList.add("rich");
     if (!renderSurface(a2ui, b)) b.appendChild(el("div", null, flattenText(a2ui) || "(no card content)"));
   }
-  if (!textStr && !a2ui.length) {
-    const errDiv = el("div", "markdown-body", "(The agent returned an empty response.)");
-    b.appendChild(errDiv);
-  }
+  if (!b.childNodes.length) b.textContent = "(no response)";
   log.scrollTop = log.scrollHeight;
 }
 
@@ -599,22 +509,15 @@ form.addEventListener("submit", async (ev) => {
   selectedFileBadge.style.display = "none";
   selectedFileName.textContent = "";
 
-  const b = bubble("agent");
-  const progress = createProgressWidget(b);
-
+  const b = bubble("agent"); b.textContent = "…";
   try {
     const res = await fetch("/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: text }) });
     const raw = await res.text();
     let data;
     try { data = JSON.parse(raw); }
     catch { throw new Error(`Server returned non-JSON (HTTP ${res.status}). ${raw.slice(0, 300)}`); }
-    
-    progress.finish();
-    setTimeout(() => {
-      renderReply(b, data.parts || []);
-    }, 400);
+    renderReply(b, data.parts || []);
   } catch (e) {
-    progress.stop();
     b.textContent = "Error: " + e.message;
   }
 });
